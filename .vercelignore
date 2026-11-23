@@ -1,0 +1,9 @@
+# Ces fichiers ne doivent PAS être publiés sur le site (ni servis en téléchargement).
+# Attention : ne jamais ajouter « api/ » ou « lib/ » ici, les fonctions en ont besoin.
+tests/
+docs/
+scripts/
+supabase/
+.env*
+README*.md
+package-lock.json

@@ -1,6 +1,13 @@
-const CACHE_NAME = 'youthconnect-cache-v5';
+// Service worker de YouthConnect.
+//
+// Règle de confidentialité : on ne met en cache QUE les fichiers statiques du site
+// (pages, styles, scripts, images). Jamais les réponses de l'API, jamais les requêtes
+// authentifiées, jamais les réponses d'un autre site (base de données, images tierces).
+// Sur un appareil partagé, les données d'un membre ne restent donc pas accessibles hors session.
 
-// Liste des fichiers à mettre en cache pour un fonctionnement hors-ligne basique
+const CACHE_NAME = 'youthconnect-cache-v6';
+
+// Fichiers essentiels, téléchargés depuis le réseau à l'installation
 const FICHIERS_A_METTRE_EN_CACHE = [
     '/',
     '/index.html',
@@ -11,16 +18,27 @@ const FICHIERS_A_METTRE_EN_CACHE = [
     '/icon-512.png'
 ];
 
+const EXTENSIONS_STATIQUES = /\.(html|css|js|mjs|png|jpe?g|webp|svg|ico|woff2?|json)$/i;
+
+// Vrai seulement pour un fichier statique du même site, sans authentification
+function estCacheable(request) {
+    if (request.method !== 'GET') return false;
+    const url = new URL(request.url);
+    if (url.origin !== self.location.origin) return false;   // autre site : jamais
+    if (url.pathname.startsWith('/api/')) return false;      // API : jamais
+    if (request.headers.has('authorization')) return false;  // requête authentifiée : jamais
+    return url.pathname === '/' || EXTENSIONS_STATIQUES.test(url.pathname);
+}
+
 // Installation : on met en cache les fichiers essentiels.
-// { cache: 'reload' } force le téléchargement réel depuis le réseau,
-// en ignorant le cache HTTP du navigateur, pour ne jamais stocker une version périmée.
+// { cache: 'reload' } force le téléchargement réel depuis le réseau.
 self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then((cache) => {
             return Promise.all(
                 FICHIERS_A_METTRE_EN_CACHE.map((url) =>
                     fetch(url, { cache: 'reload' })
-                        .then((reponse) => cache.put(url, reponse))
+                        .then((reponse) => (reponse.ok ? cache.put(url, reponse) : null))
                         .catch((e) => console.error('Échec mise en cache de', url, e))
                 )
             );
@@ -29,7 +47,7 @@ self.addEventListener('install', (event) => {
     self.skipWaiting();
 });
 
-// Activation : on nettoie les anciens caches
+// Activation : on supprime les anciens caches (dont ceux de l'ancienne version)
 self.addEventListener('activate', (event) => {
     event.waitUntil(
         caches.keys().then((noms) => {
@@ -43,24 +61,25 @@ self.addEventListener('activate', (event) => {
     self.clients.claim();
 });
 
-// Récupération : on va d'abord chercher la dernière version en ligne (réseau),
-// et on ne se rabat sur le cache que si l'appareil est hors-ligne.
-// Ça garantit que chaque appareil reçoit toujours la version la plus à jour de l'app.
+// Récupération : réseau d'abord, cache seulement hors-ligne, et seulement pour les fichiers statiques.
 self.addEventListener('fetch', (event) => {
-    if (event.request.method !== 'GET') return;
+    if (!estCacheable(event.request)) return; // le navigateur gère la requête normalement
 
     event.respondWith(
         fetch(event.request)
             .then((reponseReseau) => {
-                const copie = reponseReseau.clone();
-                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copie));
+                // Seules les réponses réussies du même site sont conservées
+                if (reponseReseau.ok && reponseReseau.type === 'basic') {
+                    const copie = reponseReseau.clone();
+                    caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copie));
+                }
                 return reponseReseau;
             })
             .catch(() => caches.match(event.request))
     );
 });
 
-// Réception d'une notification push envoyée par notre serveur (api/send-push.js)
+// Réception d'une notification push envoyée par notre serveur
 self.addEventListener('push', (event) => {
     let data = { title: 'YouthConnect', body: 'Nouvelle activité sur YouthConnect', url: '/' };
     try {
@@ -80,7 +99,6 @@ self.addEventListener('push', (event) => {
 });
 
 // Clic sur une notification : on ouvre (ou on met au premier plan) l'onglet YouthConnect
-// et on l'amène sur la bonne page de l'app (notifications, ou directement la question).
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
     const cible = event.notification.data?.url || '/?openNotifications=1';
@@ -89,8 +107,6 @@ self.addEventListener('notificationclick', (event) => {
         self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientsList) => {
             for (const client of clientsList) {
                 if ('focus' in client) {
-                    // L'onglet est déjà ouvert : on le met au premier plan et on lui indique
-                    // (via postMessage) où naviguer, sans recharger toute la page.
                     client.postMessage({ type: 'NAVIGATE', url: cible });
                     return client.focus();
                 }

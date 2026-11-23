@@ -518,6 +518,14 @@
             <label for="message">Message</label>
             <textarea id="message" name="message" placeholder="Écris ton message ici..." required></textarea>
           </div>
+          <div class="form-notice" style="font-size:.9rem;line-height:1.5;margin:8px 0 12px">
+            <p style="margin:0 0 8px"><strong>Traitement par un service tiers.</strong> Ce formulaire est traité par Formspree, un service externe. Formspree reçoit ton prénom, ton adresse e-mail, ton sujet et ton message, pour les transmettre à l'équipe YouthConnect afin de répondre à ta demande.</p>
+            <p style="margin:0 0 8px">Ces données ne servent qu'à répondre à ton message. Pour la durée de conservation et le détail du traitement, consulte la politique de confidentialité de Formspree. Ce service est provisoire : YouthConnect le remplacera ensuite, et la politique de confidentialité de YouthConnect sera publiée.</p>
+            <label style="display:flex;gap:8px;align-items:flex-start">
+              <input type="checkbox" name="consentement" value="accepte" required style="margin-top:4px">
+              <span>J'accepte que mon message soit transmis à Formspree pour être traité par l'équipe YouthConnect.</span>
+            </label>
+          </div>
           <button type="submit" class="submit-btn">Envoyer le message</button>
           <div class="success-msg" id="successMsg"> <img class="envoyer"
               src="https://img.icons8.com/?size=100&id=2Tv2g4T4Wtu0&format=png&color=000000" alt="envoyer"> Ton message

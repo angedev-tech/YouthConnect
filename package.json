@@ -1,8 +1,20 @@
 {
   "name": "youthconnect",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "private": true,
-  "dependencies": {
-    "web-push": "^3.6.7"
+  "type": "module",
+  "description": "YouthConnect : site, fonctions Vercel (api/) et base Supabase (supabase/)",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"tests/unit/*.test.js\" \"tests/security/*.test.js\"",
+    "test:db": "bash scripts/test-db.sh",
+    "dns:check": "node scripts/email-dns-check.mjs",
+    "check:supabase": "node scripts/check-supabase.mjs"
+  },
+  "devDependencies": {
+    "pg": "^8.23.1",
+    "standardwebhooks": "^1.3.0"
   }
 }
