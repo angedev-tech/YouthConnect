@@ -363,8 +363,8 @@ $$;
 
 -- ── 10. Abonnements push (D4) ─────────────────────────────────────
 
--- Enregistre l'appareil du membre actif. Un appareil déjà abonné sous un autre compte
--- est repris : la possession de l'abonnement (son adresse secrète) prouve le contrôle de l'appareil.
+-- Enregistre l'abonnement du membre actif. Un endpoint déjà lié à un autre compte
+-- est refusé ; son transfert exige la désinscription par le compte propriétaire.
 create or replace function public.register_push_subscription(p_endpoint text, p_p256dh text, p_auth text)
 returns void
 language plpgsql
@@ -375,6 +375,7 @@ declare
   uid uuid := auth.uid();
   host text;
   device_count integer;
+  affected integer;
 begin
   if uid is null then
     raise exception 'Connecte-toi pour activer les notifications.' using errcode = '42501';
@@ -405,11 +406,17 @@ begin
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth_secret)
     values (uid, p_endpoint, p_p256dh, p_auth)
   on conflict (endpoint) do update
-    set user_id = excluded.user_id,
-        p256dh = excluded.p256dh,
+    set p256dh = excluded.p256dh,
         auth_secret = excluded.auth_secret,
-        failure_count = 0,
-        created_at = now();
+        failure_count = 0
+    where push_subscriptions.user_id = excluded.user_id;
+
+  get diagnostics affected = row_count;
+
+  if affected = 0 then
+    raise exception 'Cet abonnement est déjà associé à un autre compte.'
+      using errcode = '42501';
+  end if;
 end;
 $$;
 

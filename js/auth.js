@@ -43,6 +43,8 @@ export function createAuth({ client, fetchImpl = globalThis.fetch, apiBase = '' 
   async function signUp(input, { captchaToken, termsVersion } = {}) {
     const checked = validateSignup(input);
     if (!checked.ok) throw new AuthFlowError(firstMessage(checked.errors), 'validation', checked.errors);
+    const birth = validateBirthDate(input.birthDate);
+    if (!birth.ok) throw new AuthFlowError(birth.message, 'validation', { birthDate: birth.message });
     if (!termsVersion) throw new AuthFlowError(GENERIC_MESSAGE, 'terms_missing');
 
     const v = checked.values;
@@ -59,6 +61,7 @@ export function createAuth({ client, fetchImpl = globalThis.fetch, apiBase = '' 
           first_name: v.firstName,
           last_name: v.lastName,
           phone: v.phone,
+          birth_date: birth.value,
           terms_version: termsVersion,
         },
         captchaToken,
@@ -241,13 +244,26 @@ export function createAuth({ client, fetchImpl = globalThis.fetch, apiBase = '' 
    */
   async function completeOnboarding({ username, birthDate, termsAccepted, termsVersion, firstName, lastName }) {
     const u = validateUsername(username);
-    if (!u.ok) throw new AuthFlowError(u.message, 'validation', { username: u.message });
-    const b = validateBirthDate(birthDate);
-    if (!b.ok) throw new AuthFlowError(b.message, 'validation', { birthDate: b.message });
-    if (termsAccepted !== true) {
-      throw new AuthFlowError('Tu dois accepter les conditions d\'utilisation.', 'validation', { terms: 'Tu dois accepter les conditions d\'utilisation.' });
+    if (!u.ok) {
+      throw new AuthFlowError(u.message, 'validation', { username: u.message });
     }
-    if (!termsVersion) throw new AuthFlowError(GENERIC_MESSAGE, 'terms_missing');
+
+    const b = validateBirthDate(birthDate);
+    if (!b.ok) {
+      throw new AuthFlowError(b.message, 'validation', { birthDate: b.message });
+    }
+
+    if (termsAccepted !== true) {
+      throw new AuthFlowError(
+        'Tu dois accepter les conditions d\'utilisation.',
+        'validation',
+        { terms: 'Tu dois accepter les conditions d\'utilisation.' },
+      );
+    }
+
+    if (!termsVersion) {
+      throw new AuthFlowError(GENERIC_MESSAGE, 'terms_missing');
+    }
 
     const { error } = await client.rpc('complete_onboarding', {
       p_username: u.value,
@@ -256,10 +272,13 @@ export function createAuth({ client, fetchImpl = globalThis.fetch, apiBase = '' 
       p_first_name: firstName ?? null,
       p_last_name: lastName ?? null,
     });
-    if (error) throw new AuthFlowError(messageForDatabaseError(error), error.code || 'onboarding_failed');
+
+    if (error) {
+      throw new AuthFlowError(messageForDatabaseError(error), error.code || 'onboarding_failed');
+    }
+
     return { ok: true };
   }
-
   return {
     isUsernameAvailable, signUp, signIn, signInWithEmail, signInWithUsername, signOut,
     signInWithGoogle, exchangeOAuthCode, requestPhoneVerification, verifyPhoneCode, completeOnboarding,

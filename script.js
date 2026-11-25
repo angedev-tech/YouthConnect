@@ -13,6 +13,9 @@ import {
   getFirestore, collection, addDoc, getDocs, query, orderBy,
   onSnapshot, doc, deleteDoc, updateDoc, setDoc, serverTimestamp, where
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getSupabase } from "./js/client.js";
+import { createAuth } from "./js/auth.js";
+import { COUNTRY_CODES } from "./js/validation.js";
 
 /* ─────────────────────────────────────────────────────────────
    NOTIFICATIONS PUSH (Web Push) : clé publique VAPID
@@ -20,6 +23,10 @@ import {
    serveur, dans api/send-push.js) qui doit rester secrète.
 ───────────────────────────────────────────────────────────────*/
 const VAPID_PUBLIC_KEY = "BHd7SgKkiZXIl2HrIfbuR0CkfqCgHu2CXuOVie3Aj0CPHULTd0uZmfw0s8yVGF-tMJt5T3-yRGm_NJT22saQYdU";
+
+// Doit rester identique à public.platform_settings.terms_version dans Supabase.
+// La mise en production reste bloquée tant que les brouillons juridiques ne sont pas validés.
+const TERMS_VERSION = "2026-11-18";
 
 /* ─────────────────────────────────────────────────────────────
    IMAGES DES RÉPONSES : upload vers Cloudinary (pas Firebase Storage,
@@ -121,13 +128,17 @@ let unsubComments = null;
 let unsubNotifications = null;
 let unsubReports = null;
 let unsubMembers = null;
+let supabaseClient = null;
+let authFlow = null;
+let authStateSubscription = null;
 
 /* ─────────────────────────────────────────────────────────────
    3. INITIALISATION
 ───────────────────────────────────────────────────────────────*/
 
 document.addEventListener("DOMContentLoaded", async () => {
-  loadSession();
+  // L'authentification est restaurée depuis Supabase ; les données du forum restent sur Firestore.
+  localStorage.removeItem("yc_session");
   renderNavCategories();
   renderHomeCategories();
   showPage("home");
@@ -140,11 +151,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   listenComments();
   listenMembers();
 
-  // Si une session est active, démarrer les écoutes personnelles
-  if (state.currentUser) {
-    listenNotifications();
-    if (isAdmin(state.currentUser)) listenReports();
-    subscribeToPushNotifications(true); // silencieux : ne redemande pas la permission si déjà accordée
+  // Restaure la session Supabase et branche les changements d'état d'authentification.
+  try {
+    await initializeSupabaseAuth();
+  } catch (error) {
+    console.error("Initialisation Supabase Auth impossible:", error);
+    showNotification("Le service de connexion est momentanément indisponible. Réessaie plus tard.", "error");
   }
   updateAdminUI();
 
@@ -388,23 +400,76 @@ async function addReportToFirestore(reportData) {
    6. SESSION UTILISATEUR (LocalStorage — pas besoin de synchro)
 ───────────────────────────────────────────────────────────────*/
 
-function getUsers() { return JSON.parse(localStorage.getItem("yc_users") || "[]"); }
-function saveUsers(d) { localStorage.setItem("yc_users", JSON.stringify(d)); }
+async function initializeSupabaseAuth() {
+  supabaseClient = await getSupabase();
+  authFlow = createAuth({ client: supabaseClient });
 
-function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  if (!authStateSubscription) {
+    const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        // Supabase recommande de différer les appels complémentaires hors du callback auth.
+        queueMicrotask(() => loginUser(session.user, { silent: true }));
+      } else if (event === "SIGNED_OUT") {
+        queueMicrotask(() => clearAppUserState());
+      }
+    });
+    authStateSubscription = data?.subscription ?? null;
+  }
+
+  const { data, error } = await supabaseClient.auth.getSession();
+  if (error) throw error;
+  if (data?.session?.user) loginUser(data.session.user, { silent: true });
 }
 
-function loadSession() {
-  const raw = localStorage.getItem("yc_session");
-  if (raw) {
-    try {
-      state.currentUser = JSON.parse(raw);
-      updateNavForUser();
-    } catch {
-      localStorage.removeItem("yc_session");
-    }
+function toAppUser(authUser) {
+  const metadata = authUser?.user_metadata ?? {};
+  const firstName = String(metadata.first_name ?? metadata.given_name ?? "").trim();
+  const lastName = String(metadata.last_name ?? metadata.family_name ?? "").trim();
+  const name = [firstName, lastName].filter(Boolean).join(" ")
+    || String(metadata.username ?? "").trim()
+    || authUser?.email
+    || "Membre";
+
+  return {
+    id: authUser.id,
+    name,
+    email: authUser.email ?? "",
+    username: metadata.username ?? "",
+    firstName,
+    lastName,
+    joinedAt: authUser.created_at ?? new Date().toISOString(),
+    authProvider: authUser.app_metadata?.provider ?? "email",
+  };
+}
+
+function loginUser(authUser, { silent = false } = {}) {
+  const user = toAppUser(authUser);
+  if (!user.id) throw new Error("Le compte Supabase ne contient pas d'identifiant.");
+
+  const isSameUser = state.currentUser?.id === user.id;
+  state.currentUser = user;
+  updateNavForUser();
+  updateAdminUI();
+
+  if (!isSameUser) {
+    listenNotifications();
+    if (isAdmin(user)) listenReports();
+    subscribeToPushNotifications(true);
   }
+  if (!silent && !isSameUser) {
+    showNotification(`Bienvenue ${user.name.split(" ")[0]} !`, "success");
+  }
+}
+
+function clearAppUserState() {
+  state.currentUser = null;
+  updateNavForUser();
+  if (unsubNotifications) { unsubNotifications(); unsubNotifications = null; }
+  if (unsubReports) { unsubReports(); unsubReports = null; }
+  state.notifications = [];
+  state.reports = [];
+  renderNotifBell();
+  updateAdminUI();
 }
 
 function updateNavForUser() {
@@ -566,15 +631,16 @@ function buildLoginForm() {
     </div>
     <form onsubmit="handleLogin(event)" novalidate>
       <div class="form-group">
-        <label for="login-email">Adresse email</label>
-        <input type="email" id="login-email" class="form-input" placeholder="toi@exemple.com" required autocomplete="email" />
+        <label for="login-identifier">Adresse e-mail ou pseudo</label>
+        <input type="text" id="login-identifier" class="form-input" placeholder="toi@exemple.com ou mon_pseudo" required autocomplete="username" />
       </div>
       <div class="form-group">
         <label for="login-password">Mot de passe</label>
-        <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password" />
+        <input type="password" id="login-password" class="form-input" placeholder="Ton mot de passe" required autocomplete="current-password" />
       </div>
       <p class="form-error" id="login-error"></p>
       <button type="submit" class="btn btn-primary btn-full">Se connecter</button>
+      <button type="button" class="link-btn" onclick="handleForgotPassword()">Mot de passe oublié ?</button>
     </form>
     <div class="modal-footer">
       Pas encore de compte ?
@@ -583,6 +649,10 @@ function buildLoginForm() {
 }
 
 function buildRegisterForm() {
+  const countryOptions = COUNTRY_CODES.map(country =>
+    `<option value="${country.code}" ${country.code === "+228" ? "selected" : ""}>${country.label}</option>`
+  ).join("");
+
   return `
     <div class="modal-header">
       <h2 class="modal-title">Créer un compte</h2>
@@ -590,25 +660,49 @@ function buildRegisterForm() {
     </div>
     <form onsubmit="handleRegister(event)" novalidate>
       <div class="form-group">
-        <label for="reg-name">Nom complet</label>
-        <input type="text" id="reg-name" class="form-input" placeholder="Prénom Nom" required autocomplete="name" />
-        <p class="form-error" id="err-name"></p>
+        <label for="reg-username">Pseudo</label>
+        <input type="text" id="reg-username" class="form-input" placeholder="ex. kossi_2026" minlength="3" maxlength="30" required autocomplete="username" />
       </div>
       <div class="form-group">
-        <label for="reg-email">Adresse email</label>
+        <label for="reg-first-name">Prénom</label>
+        <input type="text" id="reg-first-name" class="form-input" required maxlength="60" autocomplete="given-name" />
+      </div>
+      <div class="form-group">
+        <label for="reg-last-name">Nom</label>
+        <input type="text" id="reg-last-name" class="form-input" required maxlength="60" autocomplete="family-name" />
+      </div>
+      <div class="form-group">
+        <label for="reg-birth-date">Date de naissance</label>
+        <input type="date" id="reg-birth-date" class="form-input" required autocomplete="bday" />
+        <small>Inscription réservée aux personnes âgées de 18 ans ou plus.</small>
+      </div>
+      <div class="form-group">
+        <label for="reg-email">Adresse e-mail</label>
         <input type="email" id="reg-email" class="form-input" placeholder="toi@exemple.com" required autocomplete="email" />
-        <p class="form-error" id="err-email"></p>
+      </div>
+      <div class="form-group">
+        <label for="reg-country-code">Téléphone</label>
+        <div style="display:flex;gap:8px;">
+          <select id="reg-country-code" class="form-input" style="max-width:48%;" required>${countryOptions}</select>
+          <input type="tel" id="reg-local-phone" class="form-input" placeholder="90123456" required autocomplete="tel-national" />
+        </div>
+        <small>Indique le numéro sans le zéro initial. Une vérification par SMS sera nécessaire.</small>
       </div>
       <div class="form-group">
         <label for="reg-password">Mot de passe</label>
-        <input type="password" id="reg-password" class="form-input" placeholder="8 caractères minimum" required autocomplete="new-password" />
-        <p class="form-error" id="err-password"></p>
+        <input type="password" id="reg-password" class="form-input" placeholder="10 caractères minimum" minlength="10" required autocomplete="new-password" />
       </div>
       <div class="form-group">
         <label for="reg-confirm">Confirmer le mot de passe</label>
         <input type="password" id="reg-confirm" class="form-input" placeholder="Répète ton mot de passe" required autocomplete="new-password" />
-        <p class="form-error" id="err-confirm"></p>
       </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:flex-start;gap:9px;">
+          <input type="checkbox" id="reg-terms" required style="margin-top:4px;" />
+          <span>J'accepte les <a href="cgu.html" target="_blank" rel="noopener noreferrer">Conditions générales d'utilisation</a> et j'ai lu la <a href="confidentialite.html" target="_blank" rel="noopener noreferrer">Politique de confidentialité</a>.</span>
+        </label>
+      </div>
+      <p class="form-error" id="register-error" role="alert"></p>
       <button type="submit" class="btn btn-primary btn-full">Créer mon compte</button>
     </form>
     <div class="modal-footer">
@@ -654,113 +748,107 @@ function buildNewPostForm() {
    11. AUTHENTIFICATION (LocalStorage)
 ───────────────────────────────────────────────────────────────*/
 
-function handleRegister(event) {
+async function handleRegister(event) {
   event.preventDefault();
+  const errorId = "register-error";
+  clearErrors([errorId]);
 
-  const name = document.getElementById("reg-name").value.trim();
-  const email = document.getElementById("reg-email").value.trim().toLowerCase();
-  const password = document.getElementById("reg-password").value;
-  const confirm = document.getElementById("reg-confirm").value;
-
-  clearErrors(["err-name", "err-email", "err-password", "err-confirm"]);
-
-  let valid = true;
-
-  if (name.length < 3) {
-    showError("err-name", "Le nom doit contenir au moins 3 caractères.");
-    valid = false;
-  }
-  if (!isValidEmail(email)) {
-    showError("err-email", "Adresse email invalide.");
-    valid = false;
-  }
-  if (password.length < 8) {
-    showError("err-password", "Le mot de passe doit faire au moins 8 caractères.");
-    valid = false;
-  }
-  if (password !== confirm) {
-    showError("err-confirm", "Les mots de passe ne correspondent pas.");
-    valid = false;
-  }
-
-  if (!valid) return;
-
-  const users = getUsers();
-
-  if (users.find(u => u.email === email)) {
-    showError("err-email", "Cette adresse email est déjà utilisée.");
+  if (!authFlow) {
+    showError(errorId, "Le service de connexion n'est pas disponible. Réessaie dans quelques instants.");
     return;
   }
 
-  const newUser = {
-    id: uid(),
-    name,
-    email,
-    password,
-    joinedAt: new Date().toISOString(),
+  const input = {
+    username: document.getElementById("reg-username").value.trim(),
+    firstName: document.getElementById("reg-first-name").value.trim(),
+    lastName: document.getElementById("reg-last-name").value.trim(),
+    birthDate: document.getElementById("reg-birth-date").value,
+    email: document.getElementById("reg-email").value.trim(),
+    countryCode: document.getElementById("reg-country-code").value,
+    localPhone: document.getElementById("reg-local-phone").value.trim(),
+    password: document.getElementById("reg-password").value,
+    passwordConfirmation: document.getElementById("reg-confirm").value,
+    termsAccepted: document.getElementById("reg-terms").checked,
   };
 
-  users.push(newUser);
-  saveUsers(users);
+  const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
 
-  // Enregistre le membre côté Firestore (sans mot de passe) pour un comptage live sur tous les appareils
-  addDoc(collection(db, "members"), {
-    memberId: newUser.id,
-    name,
-    createdAt: serverTimestamp(),
-  }).catch((e) => console.error("Erreur enregistrement membre:", e));
-
-  loginUser(newUser);
-  closeModal();
-  showNotification(`Bienvenue ${newUser.name.split(" ")[0]} ! 🎉 Ton compte a été créé.`, "success");
+  try {
+    const result = await authFlow.signUp(input, { termsVersion: TERMS_VERSION });
+    closeModal();
+    showNotification(result.confirmationMessage, "success", 6500);
+  } catch (error) {
+    console.error("Inscription Supabase refusée:", error?.code || "error");
+    showError(errorId, error?.message || "L'inscription n'a pas pu aboutir. Réessaie.");
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
 }
 
-function handleLogin(event) {
+async function handleLogin(event) {
   event.preventDefault();
-
-  const email = document.getElementById("login-email").value.trim().toLowerCase();
-  const password = document.getElementById("login-password").value;
   const errEl = document.getElementById("login-error");
+  errEl.textContent = "";
+  errEl.classList.remove("visible");
 
-  errEl.style.display = "none";
-
-  const users = getUsers();
-  const user = users.find(u => u.email === email && u.password === password);
-
-  if (!user) {
-    errEl.textContent = "Email ou mot de passe incorrect.";
-    errEl.style.display = "block";
+  if (!authFlow) {
+    showError("login-error", "Le service de connexion n'est pas disponible. Réessaie dans quelques instants.");
     return;
   }
 
-  loginUser(user);
-  closeModal();
-  showNotification(`Content de te revoir, ${user.name.split(" ")[0]} ! 👋`, "success");
+  const identifier = document.getElementById("login-identifier").value.trim();
+  const password = document.getElementById("login-password").value;
+  const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
+
+  try {
+    await authFlow.signIn({ identifier, password });
+    const user = await authFlow.currentUser();
+    if (!user) throw new Error("La session n'a pas pu être ouverte. Réessaie.");
+    loginUser(user);
+    closeModal();
+    showNotification(`Content de te revoir, ${state.currentUser.name.split(" ")[0]} !`, "success");
+  } catch (error) {
+    showError("login-error", error?.message || "Connexion impossible. Vérifie tes identifiants.");
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
 }
 
-function loginUser(user) {
-  state.currentUser = user;
-  localStorage.setItem("yc_session", JSON.stringify(user));
-  updateNavForUser();
-  listenNotifications();
-  updateAdminUI();
-  if (isAdmin(user)) listenReports();
-  subscribeToPushNotifications(true);
+async function handleForgotPassword() {
+  const identifier = document.getElementById("login-identifier")?.value.trim() ?? "";
+  if (!identifier.includes("@")) {
+    showError("login-error", "Saisis ton adresse e-mail dans le champ identifiant pour recevoir un lien de réinitialisation.");
+    return;
+  }
+  if (!authFlow) {
+    showError("login-error", "Le service de connexion est momentanément indisponible.");
+    return;
+  }
+  try {
+    const result = await authFlow.requestPasswordReset({ email: identifier });
+    showNotification(result.confirmationMessage, "success", 6500);
+  } catch (error) {
+    showError("login-error", error?.message || "La demande de réinitialisation a échoué.");
+  }
 }
 
-function logout() {
-  state.currentUser = null;
-  localStorage.removeItem("yc_session");
-  updateNavForUser();
-  showPage("home");
-  showNotification("Tu as été déconnecté(e).", "info");
-
-  if (unsubNotifications) { unsubNotifications(); unsubNotifications = null; }
-  if (unsubReports) { unsubReports(); unsubReports = null; }
-  state.notifications = [];
-  state.reports = [];
-  renderNotifBell();
-  updateAdminUI();
+async function logout() {
+  if (!authFlow) {
+    clearAppUserState();
+    return;
+  }
+  try {
+    await authFlow.signOut();
+    clearAppUserState();
+    showPage("home");
+    showNotification("Tu as été déconnecté(e).", "info");
+  } catch (error) {
+    showNotification(error?.message || "La déconnexion a échoué.", "error");
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1178,7 +1266,7 @@ function renderNavCategories() { }
 function renderStats() {
   // state.membersCount vient de Firestore (listenMembers) → identique et à jour sur tous les appareils.
   // En attendant la première réponse du serveur, on retombe sur le compte local pour ne pas afficher 0.
-  const users = (state.membersCount ?? getUsers().length) + 100;
+  const users = (state.membersCount ?? 0) + 100;
   const posts = state.posts.length + 40;
   const comments = state.comments.length + 93;
 
@@ -1721,6 +1809,7 @@ window.openNewPostModal = openNewPostModal;
 window.openPostDetail = openPostDetail;
 window.handleLogin = handleLogin;
 window.handleRegister = handleRegister;
+window.handleForgotPassword = handleForgotPassword;
 window.handleNewPost = handleNewPost;
 window.handleAddComment = handleAddComment;
 window.searchPosts = searchPosts;
