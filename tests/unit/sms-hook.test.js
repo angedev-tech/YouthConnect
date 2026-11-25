@@ -82,9 +82,9 @@ afterEach(() => {
   Object.assign(console, originalConsole);
 });
 
-const payload = (sms = {}) => ({
-  user: { phone: PHONE },
-  sms: { otp: OTP, sms_type: 'phone_change', phone: PHONE, ...sms },
+const payload = ({ phone = PHONE, otp = OTP } = {}) => ({
+  user: { phone },
+  sms: { otp },
 });
 
 function signed(body, { secret = SECRET, id = 'msg_sms_1', timestamp = new Date() } = {}) {
@@ -121,10 +121,11 @@ test('signature fausse ou horodatage ancien : 401, aucun SMS', async () => {
   assert.equal(twilioCalls().length, 0);
 });
 
-test('type de SMS non géré (connexion par SMS) : 422, aucun SMS', async () => {
-  const res = await call(signed(payload({ sms_type: 'sms' })));
-  assert.equal(res.status, 422);
-  assert.equal(twilioCalls().length, 0);
+test('payload standard Supabase accepté sans sms_type', async () => {
+  const res = await call(signed(payload()));
+
+  assert.equal(res.status, 200);
+  assert.equal(twilioCalls().length, 1);
 });
 
 test('numéro ou code mal formés : 400, aucun SMS', async () => {
@@ -177,9 +178,15 @@ test('service de messagerie configuré : utilisé à la place du numéro d\'exp�
   assert.equal(sent.get('From'), null);
 });
 
-test('réinitialisation de la confirmation : le texte le dit clairement', async () => {
-  await call(signed(payload({ sms_type: 'reauthentication' })));
-  assert.match(new URLSearchParams(twilioCalls()[0].init.body).get('Body'), /confirmation/);
+test('SMS de vérification : message générique avec le code', async () => {
+  await call(signed(payload()));
+
+  const body = new URLSearchParams(
+    twilioCalls()[0].init.body
+  ).get('Body');
+
+  assert.match(body, /code de vérification/);
+  assert.match(body, new RegExp(OTP));
 });
 
 test('Twilio qui répond sans identifiant de message : considéré comme NON accepté (502)', async () => {
@@ -273,7 +280,7 @@ test('journaux et réponses : ni le code, ni le numéro, ni le jeton Twilio', as
 });
 
 test('texte du SMS : code seul, sans lien, sans nom, sous 160 caractères', () => {
-  const text = smsText({ type: 'phone_change', code: '123456' });
+  const text = smsText({ code: '123456' });
   assert.equal(/https?:\/\//.test(text), false);
   assert.ok(text.length <= 160, `longueur ${text.length}`);
   assert.ok(text.includes('123456'));

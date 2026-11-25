@@ -1,5 +1,14 @@
-node_modules/
+﻿node_modules/
+.vercel/
 .env
 .env.*
 !.env.example
-.vercel/
+/backup_auth_supabase_20261124_162404/
+/backup_sql_corrections_20261124_104850/
+/yc_route_diag_pkg/
+/youthconnect_auth_patch/
+/youthconnect_legal_patch/
+/index.html.bak_legal_20261124_153222
+/js/auth.js.backup_20261124_113352
+/youthconnect_migration.zip
+/youthconnect_sources.zip

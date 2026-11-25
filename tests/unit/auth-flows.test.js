@@ -41,7 +41,7 @@ function fakeServer({ usernameTaken = [], signInStatus = 200, signInBody = { acc
 
 const formulaire = {
   username: 'amina_2026', firstName: 'Amina', lastName: 'Koné', email: 'Amina@Exemple.fr',
-  countryCode: '+228', localPhone: '90123456', password: 'motdepasse1', passwordConfirmation: 'motdepasse1',
+  countryCode: '+228', localPhone: '90123456', birthDate: '1998-05-10', password: 'motdepasse1', passwordConfirmation: 'motdepasse1',
   termsAccepted: true,
 };
 
@@ -57,7 +57,7 @@ test('inscription : métadonnées complètes, mot de passe jamais dans les méta
   assert.equal(call.email, 'amina@exemple.fr');
   assert.equal(call.password, 'motdepasse1');
   assert.deepEqual(call.options.data, {
-    username: 'amina_2026', first_name: 'Amina', last_name: 'Koné', phone: '+22890123456', terms_version: '2026-11-18',
+    username: 'amina_2026', first_name: 'Amina', last_name: 'Koné', phone: '+22890123456', birth_date: '1998-05-10', terms_version: '2026-11-18',
   });
   assert.equal(JSON.stringify(call.options.data).includes('motdepasse1'), false, 'pas de mot de passe dans les métadonnées');
   assert.equal(call.options.captchaToken, 'cap-123');
@@ -71,6 +71,18 @@ test('inscription : formulaire invalide → aucun appel réseau ni au service', 
   await assert.rejects(
     auth.signUp({ ...formulaire, username: 'a' }, { termsVersion: '2026-11-18' }),
     (err) => err instanceof AuthFlowError && err.code === 'validation' && err.fields.username !== undefined,
+  );
+  assert.equal(requests.length, 0);
+  assert.equal(calls.length, 0);
+});
+
+test('inscription : date de naissance manquante ou âge insuffisant → aucun appel réseau', async () => {
+  const { client, calls } = fakeClient();
+  const { fetchImpl, requests } = fakeServer();
+  const auth = createAuth({ client, fetchImpl });
+  await assert.rejects(
+    auth.signUp({ ...formulaire, birthDate: '2012-01-01' }, { termsVersion: '2026-11-18' }),
+    (err) => err instanceof AuthFlowError && err.code === 'validation' && err.fields.birthDate !== undefined,
   );
   assert.equal(requests.length, 0);
   assert.equal(calls.length, 0);

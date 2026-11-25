@@ -263,4 +263,3 @@ L'avancement détaillé de chaque tâche, avec son responsable, est dans `docs/P
 - **Coût des SMS** : environ 0,14 à 0,30 € par SMS vers le Togo selon les tarifs publiés. Pour 1 000 vérifications, comptez environ 135 à 300 €. Les codes sont limités à la vérification du téléphone, sans envoi publicitaire.
 - **Formspree** : service externe provisoire. Son traitement est signalé aux membres (D5) ; il doit être remplacé et mentionné dans la politique de confidentialité.
 - **Dépendance à Google** : la connexion Google dépend de la configuration du projet Google Cloud et de la disponibilité du service.
-
