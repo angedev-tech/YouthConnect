@@ -1,47 +1,70 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1a1a2e">
+  <meta name="robots" content="noindex, nofollow">
   <title>Confirmation du compte — YouthConnect</title>
   <link rel="stylesheet" href="../style.css">
   <style>
-    body{min-height:100vh;display:grid;place-items:center;padding:24px;background:#f4f6fb;font-family:Inter,Arial,sans-serif}
-    .auth-card{width:min(100%,520px);padding:32px;border-radius:18px;background:#fff;box-shadow:0 12px 40px rgba(20,30,60,.12);text-align:center}
-    .auth-card h1{margin:0 0 14px;color:#1a1a2e;font-size:1.55rem}.auth-card p{color:#4b5563;line-height:1.6}
-    .auth-status{margin:18px 0;padding:14px;border-radius:10px;background:#eef2ff;color:#1e3a8a}
-    .auth-button{display:inline-block;margin-top:12px;padding:12px 20px;border-radius:10px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600}
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #f4f6fb;
+      font-family: Inter, Arial, sans-serif;
+    }
+    .auth-card {
+      width: min(100%, 520px);
+      padding: 32px;
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 12px 40px rgba(20,30,60,.12);
+      text-align: center;
+    }
+    .auth-card h1 {
+      margin: 0 0 14px;
+      color: #1a1a2e;
+      font-size: 1.55rem;
+    }
+    .auth-card p {
+      color: #4b5563;
+      line-height: 1.6;
+    }
+    .auth-status {
+      margin: 18px 0;
+      padding: 14px;
+      border-radius: 10px;
+      background: #eef2ff;
+      color: #1e3a8a;
+    }
+    .auth-error {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .auth-button {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 12px 20px;
+      border-radius: 10px;
+      background: #2563eb;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
   <main class="auth-card">
-    <h1>Confirmation de ton adresse e-mail</h1>
-    <p id="auth-message">Vérification du lien en cours…</p>
-    <div id="auth-status" class="auth-status" role="status" aria-live="polite">Connexion au service sécurisé…</div>
+    <h1 id="auth-message">Confirmation de ton adresse e-mail</h1>
+    <p id="auth-status" class="auth-status" role="status" aria-live="polite">
+      Vérification de ton lien de confirmation…
+    </p>
     <a class="auth-button" href="../index.html">Revenir à YouthConnect</a>
   </main>
-  <script type="module">
-    import { getSupabase } from '../js/client.js';
-    import { createAuth } from '../js/auth.js';
-    import { parseAuthLinkParams } from '../js/auth-links.js';
 
-    const message = document.getElementById('auth-message');
-    const status = document.getElementById('auth-status');
-    try {
-      const { tokenHash, type } = parseAuthLinkParams(window.location.search, ['signup', 'email_change']);
-      const client = await getSupabase();
-      const auth = createAuth({ client });
-      await auth.confirmEmail({ tokenHash, type });
-      status.textContent = type === 'signup'
-        ? 'Adresse e-mail confirmée. Tu peux maintenant revenir sur YouthConnect et te connecter.'
-        : 'Changement d’adresse e-mail confirmé.';
-      message.textContent = 'Confirmation réussie.';
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } catch (error) {
-      message.textContent = 'Le lien ne peut pas être confirmé.';
-      status.textContent = error?.message || 'Lien invalide ou expiré. Demande un nouveau lien de confirmation.';
-    }
-  </script>
+  <script type="module" src="../js/pages/confirm.js"></script>
 </body>
 </html>

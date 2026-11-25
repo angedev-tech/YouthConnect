@@ -1,4 +1,3 @@
-// Page /auth/reset-password : ouvre la session de réinitialisation puis enregistre le nouveau mot de passe.
 import { getSupabase } from '../client.js';
 import { createAuth } from '../auth.js';
 import { parseAuthLinkParams } from '../auth-links.js';
@@ -27,48 +26,78 @@ function terminer(titreTexte, texte) {
   suite.hidden = false;
 }
 
-(async () => {
+async function initialiserReinitialisation() {
   let lien;
+
   try {
-    lien = parseAuthLinkParams(location.search, ['recovery']);
+    lien = parseAuthLinkParams(window.location.search, ['recovery']);
   } catch {
-    terminer('Lien invalide', 'Ce lien est incomplet ou mal copié. Demande un nouveau lien depuis la page de connexion.');
+    terminer(
+      'Lien invalide',
+      'Ce lien est incomplet ou mal copié. Demande un nouveau lien depuis la page de connexion.'
+    );
     return;
   }
-  history.replaceState(null, '', location.pathname);
+
+  // Retire le token de l'adresse affichée après sa lecture.
+  window.history.replaceState({}, document.title, window.location.pathname);
 
   let auth;
   let adresse = '';
+
   try {
     auth = createAuth({ client: await getSupabase() });
     await auth.openRecoverySession({ tokenHash: lien.tokenHash });
+
     adresse = (await auth.currentUser())?.email || '';
-  } catch (err) {
-    terminer('Lien expiré ou déjà utilisé', `${err.message || ''} Demande un nouveau lien depuis la page de connexion.`.trim());
+
+    if (!adresse) {
+      throw new Error('La session de réinitialisation est invalide. Demande un nouveau lien.');
+    }
+  } catch (error) {
+    console.error('Ouverture de session de récupération impossible :', error?.code || 'recovery_failed');
+    terminer(
+      'Lien invalide ou expiré',
+      error?.message || 'Demande un nouveau lien de réinitialisation depuis la page de connexion.'
+    );
     return;
   }
 
-  message.textContent = 'Choisis un nouveau mot de passe, d\'au moins 10 caractères.';
+  message.textContent = 'Le lien est valide. Choisis un nouveau mot de passe d’au moins 10 caractères.';
   formulaire.hidden = false;
 
   formulaire.addEventListener('submit', async (evenement) => {
     evenement.preventDefault();
     effacerErreurs();
+
+    if (!formulaire.reportValidity()) return;
+
     bouton.disabled = true;
+
     try {
       await auth.setNewPassword({
         password: champMotDePasse.value,
         confirmation: champConfirmation.value,
         email: adresse,
       });
-      terminer('Mot de passe modifié', 'Tu peux maintenant te connecter avec ton nouveau mot de passe.');
-    } catch (err) {
-      const champs = err.fields || {};
+
+      terminer(
+        'Mot de passe modifié',
+        'Ton mot de passe a été modifié. Tu peux maintenant te connecter avec ton nouveau mot de passe.'
+      );
+    } catch (error) {
+      const champs = error.fields || {};
+
       erreurMotDePasse.textContent = champs.password || '';
       erreurConfirmation.textContent = champs.passwordConfirmation || '';
-      if (!champs.password && !champs.passwordConfirmation) erreurGenerale.textContent = err.message;
+
+      if (!champs.password && !champs.passwordConfirmation) {
+        erreurGenerale.textContent = error.message || 'La modification a échoué. Réessaie.';
+      }
     } finally {
       bouton.disabled = false;
     }
   });
-})();
+}
+
+initialiserReinitialisation();
